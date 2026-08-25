@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, type Locator, type Page, test } from '@playwright/test'
-import { fundValidatorOperator } from './fund-validator'
 import {
+    connectGateway,
     createWalletGateway,
-    connectToLocalNet,
     fillAndSubmitTransfer,
     gotoConnect,
     gotoDashboard,
@@ -27,18 +26,9 @@ type ExpectedTransaction = {
     counterpartyHint?: string
 }
 
-// Transaction history tests share wallet gateway state (primary wallet) with
-// the backend, so they must run serially.
-test.describe.configure({ mode: 'serial' })
-
 // This flow includes taps, preapproval automation, a direct transfer, and an
 // accepted transfer offer.
 test.setTimeout(300_000)
-
-// The validator operator pays the fee for accepting an amulet preapproval.
-test.beforeAll(async () => {
-    await fundValidatorOperator()
-})
 
 const gotoWalletHistory = async (
     page: Page,
@@ -132,7 +122,7 @@ test('shows taps, direct transfers, and transfer offers for both parties', async
     const wg = createWalletGateway(dappPage)
 
     await gotoConnect(dappPage)
-    await connectToLocalNet(wg)
+    await connectGateway(wg)
 
     const alice = await wg.createWalletIfNotExists({
         partyHint: aliceHint,

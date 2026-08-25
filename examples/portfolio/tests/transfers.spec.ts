@@ -4,8 +4,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import type { WalletGateway } from '@canton-network/core-wallet-test-utils'
 import {
+    connectGateway,
     createWalletGateway,
-    connectToLocalNet,
     expectOffersBadgeCount,
     expectTransferOfferGone,
     expectWalletBalance,
@@ -20,10 +20,6 @@ import {
     switchWallet,
     tap,
 } from './utils'
-
-// Transfer tests share wallet gateway state (primary wallet) with the backend,
-// so they must run serially to avoid races on which wallet is primary.
-test.describe.configure({ mode: 'serial' })
 
 // Transfer tests involve multiple ledger transactions (tap + transfer + accept/reject/withdraw),
 // so give them more time than the default 30s.
@@ -40,7 +36,7 @@ const setupTransferTest = async (page: Page): Promise<TransferTestContext> => {
     const wg = createWalletGateway(page)
 
     await gotoConnect(page)
-    await connectToLocalNet(wg)
+    await connectGateway(wg)
 
     const alice = await wg.createWalletIfNotExists({
         partyHint: `alice-${rnd}`,
