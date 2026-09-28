@@ -26,10 +26,7 @@ const connectToSettings = async (page: Page) => {
     const wg = createWalletGateway(page)
 
     await gotoConnect(page)
-    await connectGateway(wg)
-    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({
-        timeout: 15000,
-    })
+    await connectGateway(page, wg)
     await page.goto('http://localhost:8081/dashboard/settings')
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
 
@@ -260,7 +257,7 @@ test('tap via settings page', async ({ page: dappPage }) => {
     })
 
     await gotoConnect(dappPage)
-    await connectGateway(wg)
+    await connectGateway(dappPage, wg)
 
     await setupRegistry(dappPage)
     await tap(dappPage, wg, '5000.123456789')

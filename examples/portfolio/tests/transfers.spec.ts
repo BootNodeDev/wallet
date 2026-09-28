@@ -55,7 +55,7 @@ const setupTransferTest = async (page: Page): Promise<TransferTestContext> => {
     })
 
     await gotoConnect(page)
-    await connectGateway(wg)
+    await connectGateway(page, wg)
 
     await setupRegistry(page)
     await gotoDashboard(page)

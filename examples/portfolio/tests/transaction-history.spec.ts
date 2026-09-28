@@ -136,7 +136,7 @@ test('shows taps, direct transfers, and transfer offers for both parties', async
     })
 
     await gotoConnect(dappPage)
-    await connectGateway(wg)
+    await connectGateway(dappPage, wg)
     await setupRegistry(dappPage)
 
     // Both taps should appear as incoming history entries.

@@ -97,7 +97,7 @@ const setupOtcTrade = async (page: Page) => {
     })
 
     await gotoConnect(page)
-    await connectGateway(wg)
+    await connectGateway(page, wg)
     await setupRegistry(page)
 
     const logger = pino({ name: 'otc-trade', level: 'info' })

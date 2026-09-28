@@ -65,18 +65,30 @@ export const createGatewayApi = async (): Promise<GatewayUserApi> => {
 }
 
 /**
- * Connect the dApp to the gateway as this worker's user.
+ * Connect the dApp to the gateway as this worker's user, and wait until the
+ * dApp itself is connected.
  *
  * Must use the same client id as `createGatewayApi`. The dApp only sees wallets
  * belonging to the user it connected as.
+ *
+ * `wg.connect` returns when the gateway popup reports the connection, but the
+ * dApp still has to store the session and redirect to the dashboard. Navigating
+ * elsewhere before that lands cuts the connect short, so wait for the dashboard
+ * heading, which only renders with an active session.
  */
-export const connectGateway = async (wg: WalletGateway): Promise<void> => {
+export const connectGateway = async (
+    page: Page,
+    wg: WalletGateway
+): Promise<void> => {
     await wg.connect({
         network: 'LocalNet',
         credentials: {
             clientId: workerClientId(),
             clientSecret: LOCALNET_CLIENT_SECRET,
         },
+    })
+    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({
+        timeout: 15000,
     })
 }
 

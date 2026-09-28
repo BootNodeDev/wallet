@@ -33,7 +33,7 @@ test('wallet detail page - assets and transaction history', async ({
     })
 
     await gotoConnect(dappPage)
-    await connectGateway(wg)
+    await connectGateway(dappPage, wg)
 
     await setupRegistry(dappPage)
     await tap(dappPage, wg, '2000')

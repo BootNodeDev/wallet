@@ -38,7 +38,7 @@ test('toggle preapproval', async ({ page: dappPage }) => {
     })
 
     await gotoConnect(dappPage)
-    await connectGateway(wg)
+    await connectGateway(dappPage, wg)
 
     await setupRegistry(dappPage)
 
@@ -74,7 +74,7 @@ test('one step transfer to preapproved receiver', async ({
     })
 
     await gotoConnect(dappPage)
-    await connectGateway(wg)
+    await connectGateway(dappPage, wg)
 
     await setupRegistry(dappPage)
     await tap(dappPage, wg, '1000')
