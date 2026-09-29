@@ -1,8 +1,9 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { stopRegistry } from '.'
+import { mock } from './__test__/mocks'
 
 const mocks = vi.hoisted(() => {
     const use = vi.fn().mockReturnThis()
@@ -17,7 +18,6 @@ const mocks = vi.hoisted(() => {
         listen,
     }))
 
-    const initOperatorParty = vi.fn()
     const vetDar = vi.fn()
 
     return {
@@ -26,9 +26,14 @@ const mocks = vi.hoisted(() => {
         listen,
         json,
         expressFactory,
-        initOperatorParty,
         vetDar,
     }
+})
+
+vi.mock('./common/state', async () => {
+    const { mock: importedMock } = await import('./__test__/mocks')
+
+    return importedMock.state
 })
 
 vi.mock('express', () => {
@@ -38,20 +43,6 @@ vi.mock('express', () => {
         default: defaultFn,
     }
 })
-
-vi.mock('./common/operator', () => ({
-    initOperatorParty: mocks.initOperatorParty,
-    operator: {
-        party: 'operator-party',
-        keys: {
-            privateKey: 'operator-private-key',
-        },
-    },
-}))
-
-vi.mock('./common/sdk', () => ({
-    default: {},
-}))
 
 vi.mock('./api/metadata/index.js', () => ({
     default: 'metadataRouter',
@@ -69,6 +60,10 @@ vi.mock('./api/allocation-instruction/index.js', () => ({
     default: 'allocationInstructionRouter',
 }))
 
+vi.mock('./api/utilities/index.js', () => ({
+    default: 'utilitiesRouter',
+}))
+
 vi.mock('@canton-network/core-splice-codegen', () => ({
     TestToken: {
         utils: {
@@ -77,24 +72,31 @@ vi.mock('@canton-network/core-splice-codegen', () => ({
     },
 }))
 
-describe('entry file', () => {
-    afterEach(() => {
-        vi.clearAllMocks()
-    })
+vi.mock('./common/defaultSdk', () => ({
+    default: {},
+}))
 
-    it("shouldn't do anything", async () => {
+describe('entry file', () => {
+    it("shouldn't do anything when stopRegistry is called without startRegistry", async () => {
         stopRegistry()
+        expect(mock.state.RegistryState.instance.reset).not.toHaveBeenCalled()
         expect(mocks.close).not.toHaveBeenCalled()
     })
 
     it('should initialize the app and start listening', async () => {
         const { startRegistry } = await import('.')
 
-        await startRegistry()
+        await startRegistry({
+            port: 1111,
+        })
 
-        expect(mocks.initOperatorParty).toHaveBeenCalledOnce()
+        expect(mock.state.RegistryState.instantiate).toHaveBeenCalledOnce()
+        expect(mock.state.RegistryState.instantiate).toHaveBeenCalledWith({
+            port: 1111,
+        })
+
         expect(mocks.json).toHaveBeenCalledOnce()
-        expect(mocks.use).toHaveBeenCalledTimes(6)
+        expect(mocks.use).toHaveBeenCalledTimes(8)
         expect(mocks.listen).toHaveBeenCalledOnce()
         expect(mocks.listen).toHaveBeenCalledWith(5634, expect.any(Function))
         expect(mocks.vetDar).not.toHaveBeenCalled()
@@ -109,6 +111,33 @@ describe('entry file', () => {
 
         stopRegistry()
 
+        expect(mock.state.RegistryState.instance.reset).toHaveBeenCalledOnce()
         expect(mocks.close).toHaveBeenCalledOnce()
+    })
+
+    it('should pass empty config when no config is provided', async () => {
+        const { startRegistry } = await import('.')
+
+        await startRegistry()
+
+        expect(mock.state.RegistryState.instantiate).toHaveBeenCalledWith({})
+    })
+
+    it('should setup middleware in correct order', async () => {
+        const { startRegistry } = await import('.')
+
+        await startRegistry()
+
+        const routerCallOrder = mocks.use.mock.calls
+            .map((call) => call[0])
+            .filter((arg): arg is string => typeof arg === 'string')
+        expect(routerCallOrder).toEqual([
+            'metadataRouter',
+            'transferInstructionRouter',
+            'allocationRouter',
+            'allocationInstructionRouter',
+            'utilitiesRouter',
+        ])
+        expect(typeof mocks.use.mock.calls.at(-1)?.[0]).toBe('function')
     })
 })

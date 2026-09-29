@@ -4,7 +4,7 @@
 import { dapp } from './dapp-api/server.js'
 import { user } from './user-api/server.js'
 import { web } from './web/server.js'
-import { Logger } from 'pino'
+import type { Logger } from 'pino'
 import {
     StoreSql,
     bootstrap,
@@ -19,27 +19,27 @@ import {
 } from '@canton-network/core-signing-store-sql'
 import { ConfigUtils } from './config/ConfigUtils.js'
 import { SigningProvider } from '@canton-network/core-signing-lib'
-import type { SigningDrivers } from './signing/signing-drivers.js'
 import { ParticipantSigningDriver } from '@canton-network/core-signing-participant'
 import { InternalSigningDriver } from '@canton-network/core-signing-internal'
 import DfnsSigningProvider from '@canton-network/core-signing-dfns'
 import FireblocksSigningProvider from '@canton-network/core-signing-fireblocks'
 import BlockdaemonSigningProvider, {
-    CantonCaip2,
+    type CantonCaip2,
 } from '@canton-network/core-signing-blockdaemon'
 import SecurosysSigningProvider, {
     type TsbSignatureAlgorithm,
 } from '@canton-network/core-signing-securosys'
+import BitGoSigningProvider from '@canton-network/core-signing-bitgo'
 import { jwtAuthService } from './auth/jwt-auth-service.js'
 import express from 'express'
-import { CliOptions } from './index.js'
+import type { CliOptions } from './index.js'
 import { jwtAuth } from './middleware/jwtAuth.js'
 import {
     authenticatedRateLimiter,
     preAuthIpRateLimiter,
     rateLimiter,
 } from './middleware/rateLimit.js'
-import { Config } from './config/Config.js'
+import type { Config } from './config/Config.js'
 import { deriveUrls } from './config/ConfigUtils.js'
 import { existsSync } from 'fs'
 import { GATEWAY_VERSION } from './version.js'
@@ -50,6 +50,11 @@ import { Env } from './env.js'
 import { SigningWorker } from './signing/signing-worker.js'
 import { apiKeyAuth } from './middleware/apiKeyAuth.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
+import {
+    type HASHING_SCHEME_VERSION,
+    type SigningDrivers,
+} from '@canton-network/core-wallet-services'
+import { errorHandler } from './middleware/errorHandler.js'
 
 let isReady = false
 let signingWorker: SigningWorker | undefined
@@ -364,6 +369,24 @@ export async function initialize(opts: CliOptions, logger: Logger) {
         )
     }
 
+    if (Env.BITGO_ACCESS_TOKEN()) {
+        if (!Env.BITGO_ENTERPRISE_ID()) {
+            logger.warn(
+                'BITGO_ENTERPRISE_ID not set — wallet creation (createKey) will fail and restart-safe transaction lookup will be unavailable'
+            )
+        }
+        drivers[SigningProvider.BITGO] = new BitGoSigningProvider({
+            accessToken: Env.BITGO_ACCESS_TOKEN()!,
+            baseUrl: Env.BITGO_API_URL('https://app.bitgo.com'),
+            enterpriseId: Env.BITGO_ENTERPRISE_ID(),
+            coin: Env.BITGO_COIN(),
+        })
+    } else {
+        logger.warn(
+            'BITGO_ACCESS_TOKEN not set — BitGo signing provider will be unavailable'
+        )
+    }
+
     const allowedPaths = {
         [config.server.dappPath]: ['*'],
         [config.server.userPath]: [
@@ -375,9 +398,7 @@ export async function initialize(opts: CliOptions, logger: Logger) {
         ],
     }
 
-    app.use(
-        '/api/*splat',
-        express.json(),
+    const apiMiddleware = [
         preAuthRateLimit,
         apiKeyAuth(
             store,
@@ -390,8 +411,11 @@ export async function initialize(opts: CliOptions, logger: Logger) {
             store,
             allowedPaths,
             logger.child({ component: 'SessionHandler' })
-        )
-    )
+        ),
+    ]
+
+    app.use(config.server.userPath, ...apiMiddleware)
+    app.use(config.server.dappPath, ...apiMiddleware)
 
     logger.info({ ...config.server, port }, 'Server configuration')
 
@@ -401,12 +425,16 @@ export async function initialize(opts: CliOptions, logger: Logger) {
         component: 'SigningWorker',
     })
 
+    const hashingSchemeVersion: HASHING_SCHEME_VERSION =
+        config.hashingScheme?.version ?? 'HASHING_SCHEME_VERSION_V3'
+
     signingWorker = new SigningWorker({
         intervalMs: config.server.signingWorker.pollInterval,
         signingDrivers: drivers,
         store,
         notificationService,
         logger: signingWorkerLogger,
+        hashingSchemeVersion,
     })
     signingWorker.start()
 
@@ -424,7 +452,8 @@ export async function initialize(opts: CliOptions, logger: Logger) {
         store,
         {
             signingDrivers: drivers,
-        }
+        },
+        hashingSchemeVersion
     )
 
     // register user API handlers
@@ -437,11 +466,24 @@ export async function initialize(opts: CliOptions, logger: Logger) {
         notificationService,
         drivers,
         store,
+        hashingSchemeVersion,
         config.server.admin
     )
 
+    const { userPath, dappPath } = config.server
+    const isApiPath = (path: string) =>
+        path === userPath ||
+        path === dappPath ||
+        path.startsWith(`${userPath}/`) ||
+        path.startsWith(`${dappPath}/`)
+
     // register web handler
-    web(app, server, userApiUrl, dappApiUrl)
+    web(app, server, userApiUrl, dappApiUrl, isApiPath)
+
+    app.use(
+        errorHandler(logger.child({ component: 'ErrorHandler' }), isApiPath)
+    )
+
     isReady = true
 
     logger.info(

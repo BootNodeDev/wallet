@@ -10,38 +10,36 @@ import {
     ALLOCATION_REQUEST_INTERFACE_ID,
     ALLOCATION_INSTRUCTION_INTERFACE_ID,
     TRANSFER_INSTRUCTION_INTERFACE_ID,
-    HoldingView,
-    AllocationFactory_Allocate,
-    AllocationSpecification,
-    Transfer,
-    transferInstructionRegistryTypes,
-    allocationInstructionRegistryTypes,
-    ExtraArgs,
-    Metadata,
+    type HoldingView,
+    type AllocationFactory_Allocate,
+    type AllocationSpecification,
+    type Transfer,
+    type ExtraArgs,
+    type Metadata,
     FEATURED_APP_DELEGATE_PROXY_INTERFACE_ID,
-    Holding,
-    Beneficiaries,
+    type Holding,
+    type Beneficiaries,
+    type OffLedger,
 } from '@canton-network/core-token-standard'
 import {
     EventFilterBySetup,
     type LedgerCommonSchemas,
 } from '@canton-network/core-ledger-client-types'
-import { ContractId, Logger, PartyId } from '@canton-network/core-types'
-import { ACSReader, AcsOptions } from '@canton-network/core-acs-reader'
+import type { ContractId, Logger, PartyId } from '@canton-network/core-types'
+import { ACSReader, type AcsOptions } from '@canton-network/core-acs-reader'
 import {
     TokenStandardTransactionInterfaces,
     ensureInterfaceViewIsPresent,
     TransactionParser,
-    PrettyContract,
+    type PrettyContract,
     renderTransaction,
-    ViewValue,
-    Holding as TxParseHolding,
-    PrettyTransactions,
-    Transaction,
-    TransferObject,
+    type ViewValue,
+    type PrettyTransactions,
+    type Transaction,
+    type TransferObject,
 } from '@canton-network/core-tx-parser'
-import { AccessTokenProvider } from '@canton-network/core-wallet-auth'
-import {
+import type { AccessTokenProvider } from '@canton-network/core-wallet-auth'
+import type {
     AbstractLedgerProvider,
     Ops,
 } from '@canton-network/core-provider-ledger'
@@ -55,12 +53,11 @@ const EMPTY_META: Metadata = { values: {} }
 
 type JsGetActiveContractsResponse =
     LedgerCommonSchemas['JsGetActiveContractsResponse']
-type JsGetUpdatesResponse =
-    Ops.PostV2UpdatesFlats['ledgerApi']['result'][number]
-type JsGetTransactionResponse = LedgerCommonSchemas['JsGetTransactionResponse']
+type JsGetUpdatesResponse = Ops.PostV2Updates['ledgerApi']['result'][number]
+type JsGetUpdateResponse = LedgerCommonSchemas['JsGetUpdateResponse']
 type OffsetCheckpoint2 = LedgerCommonSchemas['OffsetCheckpoint2']
 type JsTransaction = LedgerCommonSchemas['JsTransaction']
-type TransactionFormat = LedgerCommonSchemas['TransactionFormat']
+type UpdateFormat = LedgerCommonSchemas['UpdateFormat']
 
 type JsActiveContract = LedgerCommonSchemas['JsActiveContract']
 
@@ -83,6 +80,80 @@ type CreateTransferChoiceArgs = {
     expectedAdmin: PartyId
     transfer: Transfer
     extraArgs: ExtraArgs
+}
+
+type ApiVersion = 'v1' | 'v2'
+type SupportedVersions = ApiVersion[]
+const SUPPORTED_VERSIONS: readonly ApiVersion[] = ['v1', 'v2'] as const
+
+function isApiVersion(v: string): v is ApiVersion {
+    return (SUPPORTED_VERSIONS as readonly string[]).includes(v)
+}
+
+export interface AssetCapabilities {
+    holding: SupportedVersions
+    transferInstruction: SupportedVersions
+    allocation: SupportedVersions
+    allocationInstruction: SupportedVersions
+    allocationRequest: SupportedVersions
+}
+
+const KEY_MAPPING: Record<string, keyof AssetCapabilities> = {
+    holding: 'holding',
+    'transfer-instruction': 'transferInstruction',
+    allocation: 'allocation',
+    'allocation-instruction': 'allocationInstruction',
+    'allocation-request': 'allocationRequest',
+}
+
+export type InstrumentInfo = {
+    id: string
+    displayName: string
+    symbol: string
+    registryUrl: string
+    admin: PartyId
+    capabilities: AssetCapabilities
+}
+
+export function resolveCapabilities(opts: {
+    supportedApis: {
+        [key: string]: number
+    }
+}): AssetCapabilities {
+    const supportedApis = opts.supportedApis
+
+    const resolvedCapabilities: AssetCapabilities = {
+        holding: [],
+        transferInstruction: [],
+        allocation: [],
+        allocationInstruction: [],
+        allocationRequest: [],
+    }
+
+    for (const key of Object.keys(supportedApis)) {
+        const match = key.match(
+            /^splice-api-token-(?<capabilityName>.+)-(?<version>v\d+)$/
+        )
+
+        if (match?.groups) {
+            const { capabilityName, version } = match.groups
+            const targetKey = KEY_MAPPING[capabilityName]
+
+            if (
+                targetKey &&
+                supportedApis[key] === 1 &&
+                isApiVersion(version)
+            ) {
+                resolvedCapabilities[targetKey].push(version)
+            }
+        }
+    }
+
+    for (const key in resolvedCapabilities) {
+        resolvedCapabilities[key as keyof AssetCapabilities].sort()
+    }
+
+    return resolvedCapabilities
 }
 
 export class CoreService {
@@ -127,17 +198,9 @@ export class CoreService {
             )
         }
 
-        const unlockedSenderHoldings = senderHoldings.filter((utxo) => {
-            //filter out locked holdings
-            const lock = utxo.interfaceViewValue.lock
-            if (!lock) return true
-
-            const expiresAt = lock.expiresAt
-            if (!expiresAt) return false
-
-            const expiresAtDate = new Date(expiresAt)
-            return expiresAtDate <= now
-        })
+        const unlockedSenderHoldings = senderHoldings.filter(
+            (utxo) => !TokenStandardService.isHoldingLocked(utxo, now)
+        )
 
         if (unlockedSenderHoldings.length > 100) {
             this.logger.warn(`Sender has more than 100 unlocked utxos.`)
@@ -252,6 +315,7 @@ export class CoreService {
                         params: {
                             resource: '/v2/state/ledger-end',
                             requestMethod: 'get',
+                            query: {},
                         },
                     })
                 ).offset!
@@ -379,10 +443,10 @@ export class CoreService {
     }
 
     async toPrettyTransaction(
-        getTransactionResponse: JsGetTransactionResponse,
+        getUpdateResponse: JsGetUpdateResponse,
         partyId: PartyId
     ): Promise<Transaction> {
-        const tx = getTransactionResponse.transaction
+        const tx = this.getTransactionFromUpdate(getUpdateResponse)
         const parser = new TransactionParser(
             this.ledgerProvider,
             tx,
@@ -394,10 +458,10 @@ export class CoreService {
     }
 
     async toPrettyTransferObjects(
-        getTransactionResponse: JsGetTransactionResponse,
+        getUpdateResponse: JsGetUpdateResponse,
         partyId: PartyId
     ): Promise<TransferObject[]> {
-        const tx = getTransactionResponse.transaction
+        const tx = this.getTransactionFromUpdate(getUpdateResponse)
         const parser = new TransactionParser(
             this.ledgerProvider,
             tx,
@@ -405,6 +469,16 @@ export class CoreService {
             this.isMasterUser
         )
         return await parser.parseTransferObjects()
+    }
+
+    private getTransactionFromUpdate(
+        getUpdateResponse: JsGetUpdateResponse
+    ): JsTransaction {
+        const update = getUpdateResponse.update
+        if (!update || !('Transaction' in update)) {
+            throw new Error('Expected transaction update')
+        }
+        return update.Transaction.value
     }
 
     async toPrettyTransactionsPerParty(
@@ -506,7 +580,7 @@ class AllocationService {
         choiceArgs: AllocationFactory_Allocate,
         excludeDebugFields: boolean = true
     ): Promise<
-        allocationInstructionRegistryTypes['schemas']['FactoryWithChoiceContext']
+        OffLedger.AllocationInstructionV1.components['schemas']['FactoryWithChoiceContext']
     > {
         return this.core
             .getTokenStandardClient(registryUrl)
@@ -519,7 +593,7 @@ class AllocationService {
     async createAllocationInstructionFromContext(
         factoryId: string,
         choiceArgs: AllocationFactory_Allocate,
-        choiceContext: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        choiceContext: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         choiceArgs.extraArgs.context = {
             ...choiceContext.choiceContextData,
@@ -542,7 +616,7 @@ class AllocationService {
         requestedAt?: string,
         prefetchedRegistryChoiceContext?: {
             factoryId: string
-            choiceContext: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+            choiceContext: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
         }
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         const choiceArgs = await this.buildAllocationFactoryChoiceArgs(
@@ -579,7 +653,7 @@ class AllocationService {
             | 'Allocation_ExecuteTransfer'
             | 'Allocation_Withdraw'
             | 'Allocation_Cancel',
-        choiceContext: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        choiceContext: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): [ExerciseCommand, DisclosedContract[]] {
         const exercise: ExerciseCommand = {
             templateId,
@@ -614,7 +688,7 @@ class AllocationService {
 
     createExecuteTransferAllocationFromContext(
         allocationCid: string,
-        choiceContext: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        choiceContext: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): [ExerciseCommand, DisclosedContract[]] {
         return this.buildAllocationExerciseWithContext(
             ALLOCATION_INTERFACE_ID,
@@ -627,7 +701,7 @@ class AllocationService {
     async createExecuteTransferAllocation(
         allocationCid: string,
         registryUrl: string,
-        prefetchedRegistryChoiceContext?: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         if (prefetchedRegistryChoiceContext) {
             return this.createExecuteTransferAllocationFromContext(
@@ -648,7 +722,9 @@ class AllocationService {
     async fetchWithdrawAllocationChoiceContext(
         allocationCid: string,
         registryUrl: string
-    ): Promise<allocationInstructionRegistryTypes['schemas']['ChoiceContext']> {
+    ): Promise<
+        OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
+    > {
         return this.core.getTokenStandardClient(registryUrl).post(
             '/registry/allocations/v1/{allocationId}/choice-contexts/withdraw',
             {
@@ -660,7 +736,7 @@ class AllocationService {
 
     createWithdrawAllocationFromContext(
         allocationCid: string,
-        choiceContext: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        choiceContext: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): [ExerciseCommand, DisclosedContract[]] {
         return this.buildAllocationExerciseWithContext(
             ALLOCATION_INTERFACE_ID,
@@ -673,7 +749,7 @@ class AllocationService {
     async createWithdrawAllocation(
         allocationCid: string,
         registryUrl: string,
-        prefetchedRegistryChoiceContext?: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         if (prefetchedRegistryChoiceContext) {
             return this.createWithdrawAllocationFromContext(
@@ -694,7 +770,9 @@ class AllocationService {
     async fetchCancelAllocationChoiceContext(
         allocationCid: string,
         registryUrl: string
-    ): Promise<allocationInstructionRegistryTypes['schemas']['ChoiceContext']> {
+    ): Promise<
+        OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
+    > {
         return this.core.getTokenStandardClient(registryUrl).post(
             '/registry/allocations/v1/{allocationId}/choice-contexts/cancel',
             {
@@ -706,7 +784,7 @@ class AllocationService {
 
     createCancelAllocationFromContext(
         allocationCid: string,
-        choiceContext: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        choiceContext: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): [ExerciseCommand, DisclosedContract[]] {
         return this.buildAllocationExerciseWithContext(
             ALLOCATION_INTERFACE_ID,
@@ -719,7 +797,7 @@ class AllocationService {
     async createCancelAllocation(
         allocationCid: string,
         registryUrl: string,
-        prefetchedRegistryChoiceContext?: allocationInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.AllocationInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         if (prefetchedRegistryChoiceContext) {
             return this.createCancelAllocationFromContext(
@@ -875,7 +953,7 @@ class TransferService {
         choiceArgs: CreateTransferChoiceArgs,
         excludeDebugFields: boolean = true
     ): Promise<
-        transferInstructionRegistryTypes['schemas']['TransferFactoryWithChoiceContext']
+        OffLedger.TransferInstructionV1.components['schemas']['TransferFactoryWithChoiceContext']
     > {
         return await this.core
             .getTokenStandardClient(registryUrl)
@@ -888,7 +966,7 @@ class TransferService {
     async createTransferFromContext(
         factoryId: string,
         choiceArgs: CreateTransferChoiceArgs,
-        choiceContext: transferInstructionRegistryTypes['schemas']['ChoiceContext']
+        choiceContext: OffLedger.TransferInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         this.logger.debug('Creating transfer from pre-fetched context...')
         choiceArgs.extraArgs.context = {
@@ -918,7 +996,7 @@ class TransferService {
         meta?: Metadata,
         prefetchedRegistryChoiceContext?: {
             factoryId: string
-            choiceContext: transferInstructionRegistryTypes['schemas']['ChoiceContext']
+            choiceContext: OffLedger.TransferInstructionV1.components['schemas']['ChoiceContext']
         },
         continueUntilCompletion?: boolean
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
@@ -1126,7 +1204,7 @@ class TransferService {
     async createAcceptTransferInstruction(
         transferInstructionCid: string,
         registryUrl: string,
-        prefetchedRegistryChoiceContext?: transferInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.TransferInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         if (prefetchedRegistryChoiceContext) {
             return this.createAcceptTransferInstructionFromContext(
@@ -1207,7 +1285,7 @@ class TransferService {
     async createRejectTransferInstruction(
         transferInstructionCid: string,
         registryUrl: string,
-        prefetchedRegistryChoiceContext?: transferInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.TransferInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         if (prefetchedRegistryChoiceContext) {
             return this.createRejectTransferInstructionFromContext(
@@ -1289,7 +1367,7 @@ class TransferService {
     async createWithdrawTransferInstruction(
         transferInstructionCid: string,
         registryUrl: string,
-        prefetchedRegistryChoiceContext?: transferInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.TransferInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         if (prefetchedRegistryChoiceContext) {
             return this.createWithdrawTransferInstructionFromContext(
@@ -1317,7 +1395,7 @@ class TransferService {
         transferInstructionCid: string,
         registryUrl: string,
         instructionChoice: 'Accept' | 'Reject' | 'Withdraw',
-        prefetchedRegistryChoiceContext?: transferInstructionRegistryTypes['schemas']['ChoiceContext']
+        prefetchedRegistryChoiceContext?: OffLedger.TransferInstructionV1.components['schemas']['ChoiceContext']
     ): Promise<[ExerciseCommand, DisclosedContract[]]> {
         switch (instructionChoice) {
             case 'Accept':
@@ -1365,6 +1443,19 @@ export class TokenStandardService {
         this.transfer = new TransferService(this.core, this.logger)
     }
 
+    async resolveCapabilitiesFromRegistryByInstrumentId(
+        registryUrl: string,
+        instrumentId: string
+    ): Promise<AssetCapabilities> {
+        const metadataInfo = await this.getInstrumentById(
+            registryUrl,
+            instrumentId
+        )
+        return resolveCapabilities({
+            supportedApis: metadataInfo.supportedApis,
+        })
+    }
+
     async getInstrumentById(registryUrl: string, instrumentId: string) {
         try {
             const params: Record<string, unknown> = {
@@ -1375,7 +1466,7 @@ export class TokenStandardService {
 
             const client = this.core.getTokenStandardClient(registryUrl)
 
-            return client.get(
+            return await client.get(
                 '/registry/metadata/v1/instruments/{instrumentId}',
                 params
             )
@@ -1410,7 +1501,16 @@ export class TokenStandardService {
         })
     }
 
-    async instrumentsToAsset(registryUrl: string) {
+    async instrumentsToAsset(registryUrl: string): Promise<
+        {
+            id: string
+            displayName: string
+            symbol: string
+            registryUrl: string
+            admin: PartyId
+            capabilities: AssetCapabilities
+        }[]
+    > {
         let instrumentsResponse = await this.listInstruments(registryUrl)
         const instruments = [...instrumentsResponse.instruments]
 
@@ -1423,22 +1523,29 @@ export class TokenStandardService {
             instruments.push(...instrumentsResponse.instruments)
         }
         const instrumentAdmin = await this.getInstrumentAdmin(registryUrl)
+
         return instruments.map((instrument) => ({
             id: instrument.id,
             displayName: instrument.name,
             symbol: instrument.symbol,
             registryUrl,
             admin: instrumentAdmin,
+            capabilities: resolveCapabilities({
+                supportedApis: instrument.supportedApis,
+            }),
         }))
     }
 
-    async registriesToAssets(registryUrls: string[]) {
+    async registriesToAssets(
+        registryUrls: string[]
+    ): Promise<InstrumentInfo[]> {
         const allInstruments: {
             id: string
             displayName: string
             symbol: string
             registryUrl: string
             admin: PartyId
+            capabilities: AssetCapabilities
         }[] = []
         for (const registryUrl of registryUrls) {
             const instruments = await this.instrumentsToAsset(registryUrl)
@@ -1493,16 +1600,17 @@ export class TokenStandardService {
                         params: {
                             resource: '/v2/state/ledger-end',
                             requestMethod: 'get',
+                            query: {},
                         },
                     })
                 ).offset!
 
             this.logger.debug(afterOffsetOrLatest, 'Using offset')
             const updatesResponse: JsGetUpdatesResponse[] =
-                await this.ledgerProvider.request<Ops.PostV2UpdatesFlats>({
+                await this.ledgerProvider.request<Ops.PostV2Updates>({
                     method: 'ledgerApi',
                     params: {
-                        resource: '/v2/updates/flats',
+                        resource: '/v2/updates',
                         requestMethod: 'post',
                         query: {},
                         body: {
@@ -1521,8 +1629,7 @@ export class TokenStandardService {
                             },
                             beginExclusive: afterOffsetOrLatest,
                             endInclusive: beforeOffsetOrLatest,
-                            verbose: false,
-                        } as unknown as Ops.PostV2UpdatesFlats['ledgerApi']['params']['body'],
+                        },
                     },
                 })
 
@@ -1541,67 +1648,64 @@ export class TokenStandardService {
         updateId: string,
         partyId: PartyId
     ): Promise<Transaction> {
-        const transactionFormat: TransactionFormat = {
-            eventFormat: EventFilterBySetup({
-                interfaceIds: TokenStandardTransactionInterfaces,
-                isMasterUser: this.isMasterUser,
-                partyId: partyId,
-                includeWildcard: true,
-            }),
-            transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS',
+        const updateFormat: UpdateFormat = {
+            includeTransactions: {
+                eventFormat: EventFilterBySetup({
+                    interfaceIds: TokenStandardTransactionInterfaces,
+                    isMasterUser: this.isMasterUser,
+                    partyId: partyId,
+                    includeWildcard: true,
+                }),
+                transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS',
+            },
         }
 
-        const getTransactionResponse =
-            await this.ledgerProvider.request<Ops.PostV2UpdatesTransactionById>(
-                {
-                    method: 'ledgerApi',
-                    params: {
-                        resource: '/v2/updates/transaction-by-id',
-                        requestMethod: 'post',
-                        body: {
-                            updateId,
-                            transactionFormat,
-                        } as Ops.PostV2UpdatesTransactionById['ledgerApi']['params']['body'],
+        const getUpdateResponse =
+            await this.ledgerProvider.request<Ops.PostV2UpdatesUpdateById>({
+                method: 'ledgerApi',
+                params: {
+                    resource: '/v2/updates/update-by-id',
+                    requestMethod: 'post',
+                    body: {
+                        updateId,
+                        updateFormat,
                     },
-                }
-            )
+                },
+            })
 
-        return this.core.toPrettyTransaction(getTransactionResponse, partyId)
+        return this.core.toPrettyTransaction(getUpdateResponse, partyId)
     }
 
     async getTransferObjectsById(
         updateId: string,
         partyId: PartyId
     ): Promise<TransferObject[]> {
-        const transactionFormat: TransactionFormat = {
-            eventFormat: EventFilterBySetup({
-                interfaceIds: TokenStandardTransactionInterfaces,
-                isMasterUser: this.isMasterUser,
-                partyId: partyId,
-                includeWildcard: true,
-            }),
-            transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS',
+        const updateFormat: UpdateFormat = {
+            includeTransactions: {
+                eventFormat: EventFilterBySetup({
+                    interfaceIds: TokenStandardTransactionInterfaces,
+                    isMasterUser: this.isMasterUser,
+                    partyId: partyId,
+                    includeWildcard: true,
+                }),
+                transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS',
+            },
         }
 
-        const getTransactionResponse =
-            await this.ledgerProvider.request<Ops.PostV2UpdatesTransactionById>(
-                {
-                    method: 'ledgerApi',
-                    params: {
-                        resource: '/v2/updates/transaction-by-id',
-                        requestMethod: 'post',
-                        body: {
-                            updateId,
-                            transactionFormat,
-                        } as Ops.PostV2UpdatesTransactionById['ledgerApi']['params']['body'],
+        const getUpdateResponse =
+            await this.ledgerProvider.request<Ops.PostV2UpdatesUpdateById>({
+                method: 'ledgerApi',
+                params: {
+                    resource: '/v2/updates/update-by-id',
+                    requestMethod: 'post',
+                    body: {
+                        updateId,
+                        updateFormat,
                     },
-                }
-            )
+                },
+            })
 
-        return this.core.toPrettyTransferObjects(
-            getTransactionResponse,
-            partyId
-        )
+        return this.core.toPrettyTransferObjects(getUpdateResponse, partyId)
     }
 
     async getInputHoldingsCids(
@@ -1720,16 +1824,46 @@ export class TokenStandardService {
     }
 
     static isHoldingLocked(
-        holding: Holding | TxParseHolding,
+        holding: PrettyContract<HoldingView>,
         currentTime: Date = new Date()
     ): boolean {
-        const lock = holding.lock
+        const lock = holding.interfaceViewValue.lock
         if (!lock) return false
 
-        const expiresAt = lock.expiresAt
-        if (!expiresAt) return true
+        let expiresAtAbsolute: Date | null = null
+        let expiresAtRelative: Date | null = null
 
-        const expiresAtDate = new Date(expiresAt)
-        return currentTime < expiresAtDate
+        if (lock.expiresAfter) {
+            const createdAt = new Date(
+                holding.activeContract.createdEvent.createdAt
+            )
+
+            // 1 microsecond = 0.001 milliseconds
+            const msToAdd = parseInt(lock.expiresAfter.microseconds) / 1000
+
+            expiresAtRelative = new Date(createdAt.getTime() + msToAdd)
+        }
+        if (lock.expiresAt) {
+            expiresAtAbsolute = new Date(lock.expiresAt)
+        }
+
+        let expiresAt: Date
+
+        // If both `expiresAt` and `expiresAfter` are set, the lock expires at the earlier of the two times.
+        if (expiresAtRelative && expiresAtAbsolute) {
+            expiresAt =
+                expiresAtRelative < expiresAtAbsolute
+                    ? expiresAtRelative
+                    : expiresAtAbsolute
+        } else if (expiresAtRelative) {
+            expiresAt = expiresAtRelative
+        } else if (expiresAtAbsolute) {
+            expiresAt = expiresAtAbsolute
+        } else {
+            // No expiration => locked
+            return true
+        }
+
+        return currentTime < expiresAt
     }
 }

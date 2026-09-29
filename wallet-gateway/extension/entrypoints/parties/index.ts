@@ -4,25 +4,26 @@
 import { css, html } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 
-import UserApiClient, {
-    type Wallet,
-} from '@canton-network/core-wallet-user-rpc-client'
+import type UserApiClient from '@canton-network/core-wallet-user-rpc-client'
+import { type Wallet } from '@canton-network/core-wallet-user-rpc-client'
 
 import {
     BaseElement,
-    WalletSetPrimaryEvent,
-    WalletAllocateEvent,
+    type WalletSetPrimaryEvent,
+    type WalletAllocateEvent,
     handleErrorToast,
 } from '@canton-network/core-wallet-ui-components'
+
+import { createUserClient } from '@/utils/legacy-frontend/rpc-client'
+import { setLocationHref } from '@/utils/legacy-frontend/navigation.js'
+
+import { stateManager } from '@/utils/legacy-frontend/state-manager'
+import { showToast } from '@/utils/legacy-frontend/utils'
+import { detectCurrentOrigin } from '@/utils/legacy-frontend/listeners.js'
+import { toRelHref } from '@/utils/legacy-frontend/routing'
+
 import '@canton-network/core-wallet-ui-components'
-
-import { createUserClient } from '@/utils/legacy/rpc-client'
-import { setLocationHref } from '@/utils/legacy/navigation.js'
-
-import { stateManager } from '@/utils/legacy/state-manager'
-import { showToast } from '@/utils/legacy/utils'
-import { detectCurrentOrigin } from '@/utils/legacy/listeners.js'
-import { toRelHref } from '@/utils/legacy/routing'
+import '@/utils/legacy-frontend'
 
 export enum WALLET_CREATION_STATUS_CODE {
     WALLET_ALLOCATED = '1',
@@ -169,10 +170,10 @@ export class UserUiParties extends BaseElement {
         super.connectedCallback()
         const currentOrigin = await detectCurrentOrigin()
         this.client = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
         this.showCreationToastIfNeeded()
-        this.updateWallets()
+        await this.updateWallets()
     }
 
     private showCreationToastIfNeeded() {
@@ -212,7 +213,7 @@ export class UserUiParties extends BaseElement {
     private async updateWallets() {
         const currentOrigin = await detectCurrentOrigin()
         const userClient = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
 
         const sessions = await userClient
@@ -221,10 +222,10 @@ export class UserUiParties extends BaseElement {
         const currentSession = sessions?.sessions?.[0]
         const networkId =
             currentSession?.network?.id ||
-            stateManager.networkId.get(currentOrigin)
+            (await stateManager.networkId.get(currentOrigin))
 
         const filter = networkId ? { networkIds: [networkId] } : undefined
-        userClient
+        await userClient
             .request({
                 method: 'listWallets',
                 params: filter ? { filter } : {},
@@ -232,12 +233,15 @@ export class UserUiParties extends BaseElement {
             .then((wallets) => {
                 this.wallets = wallets || []
             })
+            .catch(() => {
+                this.wallets = []
+            })
     }
 
     private async _onSetPrimary(e: WalletSetPrimaryEvent) {
         const currentOrigin = await detectCurrentOrigin()
         const userClient = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
         await userClient.request({
             method: 'setPrimaryWallet',
@@ -245,7 +249,7 @@ export class UserUiParties extends BaseElement {
                 partyId: e.wallet.partyId,
             },
         })
-        this.updateWallets()
+        await this.updateWallets()
     }
 
     private async _onAllocateParty(e: WalletAllocateEvent) {
@@ -254,7 +258,7 @@ export class UserUiParties extends BaseElement {
         try {
             const currentOrigin = await detectCurrentOrigin()
             const userClient = await createUserClient(
-                await stateManager.accessToken.get(currentOrigin)
+                (await stateManager.accessToken.get(currentOrigin)) || undefined
             )
             const result = await userClient.request({
                 method: 'allocatePartyForWallet',
@@ -288,6 +292,6 @@ export class UserUiParties extends BaseElement {
         }
 
         this.loading = false
-        this.updateWallets()
+        await this.updateWallets()
     }
 }

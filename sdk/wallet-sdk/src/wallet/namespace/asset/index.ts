@@ -1,11 +1,14 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { TokenStandardService } from '@canton-network/core-token-standard-service'
-import { PartyId } from '@canton-network/core-types'
-import { SDKErrorHandler } from '../../error/index.js'
-import { ParsedURL, URLInput } from '../utils/url.js'
-import { SDKContext } from '@/wallet/sdk.js'
+import type {
+    TokenStandardService,
+    AssetCapabilities,
+} from '@canton-network/core-token-standard-service'
+import type { PartyId } from '@canton-network/core-types'
+import type { SDKErrorHandler } from '../../error/index.js'
+import { ParsedURL, type URLInput } from '../utils/url.js'
+import type { SDKContext } from '@/wallet/sdk.js'
 
 export type AssetBody = {
     id: string
@@ -13,6 +16,7 @@ export type AssetBody = {
     symbol: string
     registryUrl: URL
     admin: PartyId
+    capabilities: AssetCapabilities
 }
 
 export type AssetContext = {

@@ -1,12 +1,12 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, MockedObject } from 'vitest'
+import { describe, it, expect, vi, type MockedObject } from 'vitest'
 import { CoreService, TokenStandardService } from './token-standard-service.js'
-import { PrettyContract } from '@canton-network/core-tx-parser'
-import { HoldingView } from '@canton-network/core-token-standard'
+import type { PrettyContract } from '@canton-network/core-tx-parser'
+import { type HoldingView } from '@canton-network/core-token-standard'
 import { Decimal } from 'decimal.js'
-import { Logger } from '@canton-network/core-types'
+import type { Logger } from '@canton-network/core-types'
 import rawTransactions from './test-data/mock/txs.json'
 import prettyTransactions from './test-data/expected/txs.json'
 
@@ -865,6 +865,13 @@ describe('Token standard service', () => {
                 id: 'TestTokenExt',
                 registryUrl: 'https://fake/registry',
                 symbol: 'TestTokenExt',
+                capabilities: {
+                    allocation: ['v1'],
+                    allocationInstruction: ['v1'],
+                    allocationRequest: ['v1'],
+                    holding: ['v1'],
+                    transferInstruction: ['v1'],
+                },
             },
             {
                 admin: 'auth0_007c6643538f2eadd3e573dd05b9::12205bcc106efa0eaa7f18dc491e5c6f5fb9b0cc68dc110ae66f4ed6467475d7c78e',
@@ -872,6 +879,13 @@ describe('Token standard service', () => {
                 id: 'TestToken',
                 registryUrl: 'https://fake/registry',
                 symbol: 'TestToken',
+                capabilities: {
+                    allocation: ['v1'],
+                    allocationInstruction: ['v1'],
+                    allocationRequest: ['v1'],
+                    holding: ['v1'],
+                    transferInstruction: ['v1'],
+                },
             },
         ])
     })
@@ -919,6 +933,18 @@ describe('Token standard service', () => {
                         id: 'first-token',
                         name: 'First Token',
                         symbol: 'FIRST',
+                        supportedApis: {
+                            'splice-api-token-transfer-instruction-v2': 1,
+                            'splice-api-token-allocation-v1': 1,
+                            'splice-api-token-holding-v2': 1,
+                            'splice-api-token-allocation-instruction-v2': 1,
+                            'splice-api-token-metadata-v1': 1,
+                            'splice-api-token-allocation-v2': 1,
+                            'splice-api-token-transfer-events-v2': 1,
+                            'splice-api-token-transfer-instruction-v1': 1,
+                            'splice-api-token-holding-v1': 1,
+                            'splice-api-token-allocation-instruction-v1': 1,
+                        },
                     },
                 ],
                 nextPageToken: 'page-2',
@@ -929,6 +955,18 @@ describe('Token standard service', () => {
                         id: 'second-token',
                         name: 'Second Token',
                         symbol: 'SECOND',
+                        supportedApis: {
+                            'splice-api-token-transfer-instruction-v2': 1,
+                            'splice-api-token-allocation-v1': 1,
+                            'splice-api-token-holding-v2': 1,
+                            'splice-api-token-allocation-instruction-v2': 1,
+                            'splice-api-token-metadata-v1': 1,
+                            'splice-api-token-allocation-v2': 1,
+                            'splice-api-token-transfer-events-v2': 1,
+                            'splice-api-token-transfer-instruction-v1': 1,
+                            'splice-api-token-holding-v1': 1,
+                            'splice-api-token-allocation-instruction-v1': 1,
+                        },
                     },
                 ],
             })
@@ -953,6 +991,13 @@ describe('Token standard service', () => {
                 id: 'first-token',
                 registryUrl,
                 symbol: 'FIRST',
+                capabilities: {
+                    allocation: ['v1', 'v2'],
+                    allocationInstruction: ['v1', 'v2'],
+                    allocationRequest: [],
+                    holding: ['v1', 'v2'],
+                    transferInstruction: ['v1', 'v2'],
+                },
             },
             {
                 admin: 'admin-id',
@@ -960,65 +1005,68 @@ describe('Token standard service', () => {
                 id: 'second-token',
                 registryUrl,
                 symbol: 'SECOND',
+                capabilities: {
+                    allocation: ['v1', 'v2'],
+                    allocationInstruction: ['v1', 'v2'],
+                    holding: ['v1', 'v2'],
+                    transferInstruction: ['v1', 'v2'],
+                    allocationRequest: [],
+                },
             },
         ])
     })
 
-    it('holding locked returns correctly', async () => {
-        const future = new Date(Date.now() + 100_000).toISOString()
-        const past = new Date(Date.now() - 100_000).toISOString()
+    describe('isHoldingLocked', () => {
+        // Used for relative time
+        const createdAt = '2026-09-01T10:00:00.000Z'
 
-        expect(
-            TokenStandardService.isHoldingLocked({
-                lock: null,
-                owner: '',
-                instrumentId: {
-                    admin: '',
-                    id: '',
-                },
-                amount: '',
-                meta: undefined,
-            } as any)
-        ).toBe(false)
+        const past = '2026-09-01T10:59:59.999Z'
+        const pastRel = { microseconds: '3599999000' }
 
-        expect(
-            TokenStandardService.isHoldingLocked({
-                lock: {},
-                owner: '',
-                instrumentId: {
-                    admin: '',
-                    id: '',
-                },
-                amount: '',
-                meta: undefined,
-            } as any)
-        ).toBe(true)
+        const now = '2026-09-01T11:00:00.000Z'
+        const nowRel = { microseconds: '3600000000' }
 
-        expect(
-            TokenStandardService.isHoldingLocked({
-                lock: { expiresAt: future },
-                owner: '',
-                instrumentId: {
-                    admin: '',
-                    id: '',
-                },
-                amount: '',
-                meta: undefined,
-            } as any)
-        ).toBe(true)
+        const future = '2026-09-01T11:00:00.001Z'
+        const futureRel = { microseconds: '3600001000' }
 
-        expect(
-            TokenStandardService.isHoldingLocked({
-                lock: { expiresAt: past },
-                owner: '',
-                instrumentId: {
-                    admin: '',
-                    id: '',
-                },
-                amount: '',
-                meta: undefined,
-            } as any)
-        ).toBe(false)
+        it.each([
+            [null, false],
+            [{}, true],
+            [{ expiresAt: null }, true],
+            [{ expiresAt: past }, false],
+            [{ expiresAt: now }, false],
+            [{ expiresAt: future }, true],
+            [{ expiresAfter: pastRel }, false],
+            [{ expiresAfter: nowRel }, false],
+            [{ expiresAfter: futureRel }, true],
+            [{ expiresAt: future, expiresAfter: futureRel }, true],
+            [{ expiresAt: now, expiresAfter: futureRel }, false],
+            [{ expiresAt: future, expiresAfter: nowRel }, false],
+        ])('holding locked with lock %o returns %s', (lock, expected) => {
+            expect(
+                TokenStandardService.isHoldingLocked(
+                    {
+                        interfaceViewValue: {
+                            lock,
+                            owner: '',
+                            instrumentId: {
+                                admin: '',
+                                id: '',
+                            },
+                            amount: '',
+                            meta: undefined,
+                        },
+                        contractId: '',
+                        activeContract: {
+                            createdEvent: { createdAt },
+                            synchronizerId: '',
+                            reassignmentCounter: 0,
+                        },
+                    } as any,
+                    new Date(now)
+                )
+            ).toBe(expected)
+        })
     })
 
     it('create delegate proxy transfer', async () => {
@@ -1212,6 +1260,13 @@ describe('Token standard service', () => {
                 id: 'USDCx',
                 registryUrl: 'http://registry1.com',
                 symbol: 'USDCx',
+                capabilities: {
+                    allocation: ['v1'],
+                    allocationInstruction: ['v1'],
+                    allocationRequest: ['v1'],
+                    holding: ['v1'],
+                    transferInstruction: ['v1'],
+                },
             },
             {
                 admin: 'admin-b',
@@ -1219,6 +1274,13 @@ describe('Token standard service', () => {
                 id: 'TestTokenExt',
                 registryUrl: 'http://registry2.com',
                 symbol: 'TestTokenExt',
+                capabilities: {
+                    allocation: ['v1'],
+                    allocationInstruction: ['v1'],
+                    allocationRequest: ['v1'],
+                    holding: ['v1'],
+                    transferInstruction: ['v1'],
+                },
             },
             {
                 admin: 'admin-b',
@@ -1226,6 +1288,13 @@ describe('Token standard service', () => {
                 id: 'TestToken',
                 registryUrl: 'http://registry2.com',
                 symbol: 'TestToken',
+                capabilities: {
+                    allocation: ['v1'],
+                    allocationInstruction: ['v1'],
+                    allocationRequest: ['v1'],
+                    holding: ['v1'],
+                    transferInstruction: ['v1'],
+                },
             },
         ])
     })
@@ -1252,9 +1321,13 @@ describe('Token standard service', () => {
                 resource: '/v2/state/latest-pruned-offsets',
                 requestMethod: 'get',
             },
-            { resource: '/v2/state/ledger-end', requestMethod: 'get' },
             {
-                resource: '/v2/updates/flats',
+                resource: '/v2/state/ledger-end',
+                requestMethod: 'get',
+                query: {},
+            },
+            {
+                resource: '/v2/updates',
                 requestMethod: 'post',
                 query: {},
                 body: {
@@ -1369,7 +1442,6 @@ describe('Token standard service', () => {
                     },
                     beginExclusive: 5,
                     endInclusive: 100,
-                    verbose: false,
                 },
             },
         ])
@@ -1377,15 +1449,25 @@ describe('Token standard service', () => {
 
     it('transaction by id', async () => {
         const { service, provider } = makeService()
-        provider.request.mockResolvedValue({ transaction: {} })
+        provider.request.mockResolvedValue({
+            update: { Transaction: { value: {} } },
+        })
         vi.spyOn(service.core, 'toPrettyTransaction').mockResolvedValue({
             id: 'tx-1',
         } as any)
 
         await service.getTransactionById('update-abc', senderParty)
         const [call] = provider.request.mock.calls
-        expect(call[0].params.resource).toBe('/v2/updates/transaction-by-id')
+        expect(call[0].params.resource).toBe('/v2/updates/update-by-id')
         expect(call[0].params.requestMethod).toBe('post')
+        expect(call[0].params.body).toMatchObject({
+            updateId: 'update-abc',
+            updateFormat: {
+                includeTransactions: {
+                    transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS',
+                },
+            },
+        })
     })
 
     it('to pretty transactions process transaction updates', async () => {

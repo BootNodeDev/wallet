@@ -8,47 +8,22 @@ import '@canton-network/core-wallet-ui-components'
 import {
     BaseElement,
     handleErrorToast,
-    LoginConnectEvent,
-    WgLoginForm,
+    type LoginConnectEvent,
+    type WgLoginForm,
 } from '@canton-network/core-wallet-ui-components'
-import { createUserClient } from '@/utils/legacy/rpc-client'
-import { PublicNetwork, Idp } from '@canton-network/core-wallet-user-rpc-client'
-import { stateManager } from '@/utils/legacy/state-manager'
-import '@/utils/legacy'
-import { redirectToIntendedOrDefault, addUserSession } from '@/utils/legacy'
-import { setLocationHref } from '@/utils/legacy/navigation.js'
-import { detectCurrentOrigin } from '@/utils/legacy/listeners.js'
-import { toRelHref } from '@/utils/legacy/routing'
-
-const PKCE_CODE_VERIFIER_LENGTH = 64
-
-const toBase64Url = (bytes: Uint8Array): string => {
-    const binary = String.fromCharCode(...bytes)
-    return btoa(binary)
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '')
-}
-
-const createPkcePair = async (): Promise<{
-    verifier: string
-    challenge: string
-}> => {
-    const verifierBytes = crypto.getRandomValues(
-        new Uint8Array(PKCE_CODE_VERIFIER_LENGTH)
-    )
-    const verifier = toBase64Url(verifierBytes)
-
-    const digest = await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(verifier)
-    )
-
-    return {
-        verifier,
-        challenge: toBase64Url(new Uint8Array(digest)),
-    }
-}
+import { createUserClient } from '@/utils/legacy-frontend/rpc-client'
+import type {
+    PublicNetwork,
+    Idp,
+} from '@canton-network/core-wallet-user-rpc-client'
+import { stateManager } from '@/utils/legacy-frontend/state-manager'
+import '@/utils/legacy-frontend'
+import {
+    redirectToIntendedOrDefault,
+    addUserSession,
+} from '@/utils/legacy-frontend'
+import { detectCurrentOrigin } from '@/utils/legacy-frontend/listeners.js'
+import { buildAuthorization, fetchToken } from '@/utils/reusable/oauth'
 
 @customElement('user-ui-login')
 export class LoginUI extends BaseElement {
@@ -70,7 +45,7 @@ export class LoginUI extends BaseElement {
     private async loadNetworks() {
         const currentOrigin = await detectCurrentOrigin()
         const userClient = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
         const response = await userClient.request({ method: 'listNetworks' })
         return response.networks
@@ -79,7 +54,7 @@ export class LoginUI extends BaseElement {
     private async loadIdps() {
         const currentOrigin = await detectCurrentOrigin()
         const userClient = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
         const response = await userClient.request({ method: 'listIdps' })
         return response.idps
@@ -114,63 +89,64 @@ export class LoginUI extends BaseElement {
     }
 
     private async handleConnect(e: LoginConnectEvent) {
-        const { selectedNetwork, selectedIdp, clientId } = e
+        const { selectedNetwork, selectedIdp, clientId, clientSecret } = e
 
         this.connecting = true
         this.connectingMessage = `Connecting to ${selectedNetwork.name}...`
         const currentOrigin = await detectCurrentOrigin()
-        stateManager.networkId.set(selectedNetwork.id, currentOrigin)
+        await stateManager.networkId.set(selectedNetwork.id, currentOrigin)
 
         try {
             if (selectedIdp.type === 'self_signed') {
-                await this.selfSign(selectedNetwork.id, clientId)
+                await this.selfSign(
+                    selectedNetwork.id,
+                    clientId ?? '',
+                    clientSecret ?? ''
+                )
                 await redirectToIntendedOrDefault()
                 return
             }
 
             if (selectedIdp.type === 'oauth') {
                 if (selectedNetwork.authMethod === 'authorization_code') {
-                    const redirectUri = new URL(
-                        toRelHref('/callback'),
-                        window.location.origin
-                    ).toString()
+                    const redirectUri = browser.identity.getRedirectURL()
 
-                    const config = await fetch(
-                        selectedIdp.configUrl || ''
-                    ).then((res) => res.json())
-
-                    const statePayload = {
-                        configUrl: selectedIdp.configUrl,
-                        clientId: selectedNetwork.clientId,
-                        audience: selectedNetwork.audience,
-                        stateId: crypto.randomUUID(),
-                    }
-
-                    const { verifier, challenge } = await createPkcePair()
-                    sessionStorage.setItem(
-                        `oauth-pkce-${statePayload.stateId}`,
-                        verifier
-                    )
-
-                    const params = new URLSearchParams({
-                        response_type: 'code',
-                        client_id: selectedNetwork.clientId || '',
-                        redirect_uri: redirectUri,
-                        nonce: crypto.randomUUID(),
-                        scope: selectedNetwork.scope || '',
+                    const authUrl = await buildAuthorization({
+                        configUrl: selectedIdp.configUrl || '',
+                        clientId: selectedNetwork.clientId || '',
                         audience: selectedNetwork.audience || '',
-                        state: btoa(JSON.stringify(statePayload)),
-                        code_challenge: challenge,
-                        code_challenge_method: 'S256',
+                        scope: selectedNetwork.scope || '',
+                        redirectUri,
                     })
 
-                    this.connectingMessage = `Redirecting to ${selectedNetwork.name}...`
+                    logger.info('Launching web auth flow with URL: ' + authUrl)
 
-                    setTimeout(() => {
-                        setLocationHref(
-                            `${config.authorization_endpoint}?${params.toString()}`
-                        )
-                    }, 250)
+                    const callbackUri =
+                        await browser.identity.launchWebAuthFlow({
+                            url: authUrl,
+                            interactive: true,
+                        })
+
+                    const token = await fetchToken(callbackUri, redirectUri)
+                    const payload = token.split('.')[1]
+
+                    if (!payload) {
+                        throw new Error('Invalid token received')
+                    }
+
+                    const claims = JSON.parse(atob(payload))
+
+                    await stateManager.expirationDate.set(
+                        new Date(claims.exp * 1000).toISOString(),
+                        currentOrigin
+                    )
+
+                    await stateManager.accessToken.set(token, currentOrigin)
+                    const networkId =
+                        await stateManager.networkId.get(currentOrigin)
+
+                    await addUserSession(token, networkId || '')
+                    await redirectToIntendedOrDefault()
                     return
                 }
 
@@ -194,18 +170,22 @@ export class LoginUI extends BaseElement {
         }
     }
 
-    protected async selfSign(networkId: string, clientId: string) {
+    protected async selfSign(
+        networkId: string,
+        clientId: string,
+        clientSecret: string
+    ) {
         const currentOrigin = await detectCurrentOrigin()
         const userClient = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
         const { accessToken } = await userClient.request({
             method: 'selfSignedAccessToken',
-            params: { networkId, clientId },
+            params: { networkId, clientId, clientSecret },
         })
 
         const payload = JSON.parse(atob(accessToken.split('.')[1]!))
-        stateManager.expirationDate.set(
+        await stateManager.expirationDate.set(
             new Date(payload.exp * 1000).toISOString(),
             currentOrigin
         )

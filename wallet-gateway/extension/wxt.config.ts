@@ -9,5 +9,13 @@ export default defineConfig({
     manifest: {
         name: 'Canton Wallet',
         description: 'Canton Wallet Extension',
+        permissions: [
+            'identity',
+            'storage',
+            'tabs',
+            'webRequest',
+            'webRequestBlocking',
+        ],
+        host_permissions: ['http://127.0.0.1/*'],
     },
 })

@@ -4,7 +4,7 @@
 import { fixture, elementUpdated } from '@open-wc/testing-helpers'
 import { html } from 'lit'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { LoginConnectEvent, WgLoginForm } from './login-form.js'
+import { LoginConnectEvent, type WgLoginForm } from './login-form.js'
 import { makeIdp, makePublicNetwork } from './fixtures.js'
 
 describe('wg-login-form', () => {
@@ -178,6 +178,113 @@ describe('wg-login-form', () => {
         const event = listener.mock.calls[0][0] as LoginConnectEvent
         expect(event.selectedNetwork).toBe(network)
         expect(event.selectedIdp).toBe(idp)
+        expect(event.clientId).toBeUndefined()
+        expect(event.clientSecret).toBeUndefined()
+        expect(event.username).toBeUndefined()
+    })
+
+    it('emits the entered client secret for self-signed identity providers', async () => {
+        const network = makePublicNetwork({
+            identityProviderId: 'idp-1',
+            clientId: 'client-id',
+        })
+        const idp = makeIdp({ id: 'idp-1', type: 'self_signed' })
+
+        const el = await fixture<WgLoginForm>(
+            html`<wg-login-form
+                .networks=${[network]}
+                .idps=${[idp]}
+            ></wg-login-form>`
+        )
+
+        const secretInput =
+            el.shadowRoot!.querySelector<HTMLInputElement>('#client-secret')!
+        expect(secretInput.type).toBe('password')
+        secretInput.value = 'network-secret'
+
+        const listener = vi.fn()
+        el.addEventListener('login-connect', listener)
+
+        el.shadowRoot!.querySelector<HTMLButtonElement>('.connect-btn')!.click()
+
+        expect(listener).toHaveBeenCalledOnce()
+        const event = listener.mock.calls[0][0] as LoginConnectEvent
         expect(event.clientId).toBe('client-id')
+        expect(event.clientSecret).toBe('network-secret')
+        expect(event.username).toBeUndefined()
+    })
+
+    it('shows a username field for self_issued identity providers', async () => {
+        const el = await fixture<WgLoginForm>(
+            html`<wg-login-form
+                .networks=${[
+                    makePublicNetwork({
+                        identityProviderId: 'idp-1',
+                    }),
+                ]}
+                .idps=${[makeIdp({ id: 'idp-1', type: 'self_issued' })]}
+            ></wg-login-form>`
+        )
+
+        const username =
+            el.shadowRoot!.querySelector<HTMLInputElement>('#username')
+        expect(username).not.toBeNull()
+        expect(username!.type).toBe('text')
+        expect(el.shadowRoot!.querySelector('#client-id')).toBeNull()
+        expect(el.shadowRoot!.querySelector('#client-secret')).toBeNull()
+    })
+
+    it('emits the entered username for self_issued identity providers', async () => {
+        const network = makePublicNetwork({ identityProviderId: 'idp-1' })
+        const idp = makeIdp({ id: 'idp-1', type: 'self_issued' })
+
+        const el = await fixture<WgLoginForm>(
+            html`<wg-login-form
+                .networks=${[network]}
+                .idps=${[idp]}
+            ></wg-login-form>`
+        )
+
+        const usernameInput =
+            el.shadowRoot!.querySelector<HTMLInputElement>('#username')!
+        usernameInput.value = 'alice'
+
+        const listener = vi.fn()
+        el.addEventListener('login-connect', listener)
+
+        el.shadowRoot!.querySelector<HTMLButtonElement>('.connect-btn')!.click()
+
+        expect(listener).toHaveBeenCalledOnce()
+        const event = listener.mock.calls[0][0] as LoginConnectEvent
+        expect(event.selectedNetwork).toBe(network)
+        expect(event.selectedIdp).toBe(idp)
+        expect(event.username).toBe('alice')
+        expect(event.clientId).toBeUndefined()
+        expect(event.clientSecret).toBeUndefined()
+    })
+
+    it('submits on form submit event', async () => {
+        const network = makePublicNetwork({
+            identityProviderId: 'idp-1',
+            clientId: 'client-id',
+        })
+        const idp = makeIdp({ id: 'idp-1' })
+
+        const el = await fixture<WgLoginForm>(
+            html`<wg-login-form
+                .networks=${[network]}
+                .idps=${[idp]}
+            ></wg-login-form>`
+        )
+
+        const listener = vi.fn()
+        el.addEventListener('login-connect', listener)
+
+        el.shadowRoot!.querySelector('form')!.dispatchEvent(
+            new Event('submit', { bubbles: true, cancelable: true })
+        )
+
+        expect(listener).toHaveBeenCalledOnce()
+        expect(listener.mock.calls[0][0]).toBeInstanceOf(LoginConnectEvent)
     })
 })

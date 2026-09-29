@@ -5,32 +5,27 @@ import { css, html } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import {
     BaseElement,
-    SigningProviderChangeEvent,
-    WalletCreateEvent,
+    type WalletCreateEvent,
     chevronLeftIcon,
     handleErrorToast,
 } from '@canton-network/core-wallet-ui-components'
 import { SigningProvider } from '@canton-network/core-signing-lib'
-import { createUserClient } from '@/utils/legacy/rpc-client'
-import { setLocationHref } from '@/utils/legacy/navigation.js'
-import { toRelHref, toRelPath } from '@/utils/legacy/routing'
-import { stateManager } from '@/utils/legacy/state-manager'
-import { showToast } from '@/utils/legacy/utils.js'
-import '@/utils/legacy'
+import { createUserClient } from '@/utils/legacy-frontend/rpc-client'
+import { setLocationHref } from '@/utils/legacy-frontend/navigation.js'
+import { toRelHref, toRelPath } from '@/utils/legacy-frontend/routing'
+import { stateManager } from '@/utils/legacy-frontend/state-manager'
+import '@/utils/legacy-frontend'
 import { WALLET_CREATION_STATUS_CODE } from '../parties/index'
-import { type WalletStatus } from '@canton-network/core-wallet-user-rpc-client'
-import { detectCurrentOrigin } from '@/utils/legacy/listeners.js'
+import type { WalletStatus } from '@canton-network/core-wallet-user-rpc-client'
+import { detectCurrentOrigin } from '@/utils/legacy-frontend/listeners.js'
 
 @customElement('user-ui-add-party')
 export class UserUiAddParty extends BaseElement {
-    private static readonly vaultSigningProviders = [SigningProvider.FIREBLOCKS]
-
-    @state() accessor signingProviders: string[] =
-        Object.values(SigningProvider)
+    @state() accessor signingProviders: string[] = [
+        SigningProvider.WALLET_KERNEL,
+    ]
     @state() accessor networkIds: string[] = []
     @state() accessor submitting = false
-    @state() accessor vaults: string[] = []
-    @state() accessor vaultsLoading = false
 
     static styles = [
         BaseElement.styles,
@@ -55,13 +50,15 @@ export class UserUiAddParty extends BaseElement {
 
     override connectedCallback(): void {
         super.connectedCallback()
-        this.loadContext()
+        this.loadContext().catch((error) => {
+            handleErrorToast(error)
+        })
     }
 
     private async loadContext() {
         const currentOrigin = await detectCurrentOrigin()
         const userClient = await createUserClient(
-            await stateManager.accessToken.get(currentOrigin)
+            (await stateManager.accessToken.get(currentOrigin)) || undefined
         )
         const sessions = await userClient
             .request({ method: 'listSessions' })
@@ -69,46 +66,9 @@ export class UserUiAddParty extends BaseElement {
         const currentSession = sessions?.sessions?.[0]
         const networkId =
             currentSession?.network?.id ||
-            stateManager.networkId.get(currentOrigin)
+            (await stateManager.networkId.get(currentOrigin))
+
         this.networkIds = networkId ? [networkId] : []
-    }
-
-    private async onSigningProviderChange(event: SigningProviderChangeEvent) {
-        this.vaults = []
-
-        const { signingProviderId } = event
-        if (
-            !UserUiAddParty.vaultSigningProviders.includes(
-                signingProviderId as SigningProvider
-            )
-        ) {
-            return
-        }
-
-        this.vaultsLoading = true
-
-        const currentOrigin = await detectCurrentOrigin()
-        try {
-            const userClient = await createUserClient(
-                await stateManager.accessToken.get(currentOrigin)
-            )
-            const result = await userClient.request({
-                method: 'listSigningProviderVaults',
-                params: { signingProviderId },
-            })
-            this.vaults = result.vaults.sort()
-            if (result.vaults.length === 0) {
-                showToast(
-                    'No vault accounts found',
-                    'No vault accounts are available for the selected signing provider.',
-                    'info'
-                )
-            }
-        } catch (error) {
-            handleErrorToast(error)
-        } finally {
-            this.vaultsLoading = false
-        }
     }
 
     private navigateBack() {
@@ -121,7 +81,7 @@ export class UserUiAddParty extends BaseElement {
         try {
             const currentOrigin = await detectCurrentOrigin()
             const userClient = await createUserClient(
-                await stateManager.accessToken.get(currentOrigin)
+                (await stateManager.accessToken.get(currentOrigin)) || undefined
             )
             const result = await userClient.request({
                 method: 'createWallet',
@@ -169,14 +129,10 @@ export class UserUiAddParty extends BaseElement {
                 <wg-wallet-create-form
                     .signingProviders=${this.signingProviders}
                     .networkIds=${this.networkIds}
-                    .vaultSigningProviders=${UserUiAddParty.vaultSigningProviders}
-                    .vaults=${this.vaults}
-                    ?vaultsLoading=${this.vaultsLoading}
                     .submitLabel=${'Create party'}
                     .submittingLabel=${'Creating party...'}
                     .submittingMessage=${'Creating party, please wait...'}
                     ?submitting=${this.submitting}
-                    @signing-provider-change=${this.onSigningProviderChange}
                     @wallet-create=${this.onCreateParty}
                 ></wg-wallet-create-form>
             </div>

@@ -1,6 +1,6 @@
 {
     "name": "@canton-network/core-rpc-errors",
-    "version": "1.9.1",
+    "version": "1.11.1",
     "type": "module",
     "description": "Wrapper for JSON-RPC error objects",
     "author": "Alex Matson <alex.matson@digitalasset.com>",
@@ -31,13 +31,13 @@
         "test:coverage": "vitest run --project node --coverage --passWithNoTests"
     },
     "dependencies": {
-        "@metamask/rpc-errors": "^7.0.3"
+        "@metamask/rpc-errors": "catalog:"
     },
     "devDependencies": {
-        "@vitest/coverage-v8": "^4.1.10",
-        "tsdown": "^0.22.9",
-        "typescript": "^5.9.3",
-        "vitest": "^4.1.10"
+        "@vitest/coverage-v8": "catalog:",
+        "tsdown": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
     },
     "repository": {
         "type": "git",

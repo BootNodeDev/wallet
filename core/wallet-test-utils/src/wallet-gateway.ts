@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, Locator, Page, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
+import { openWalletPicker } from './wallet-picker.js'
 
 export interface NetworkFormInput {
     id: string
@@ -17,15 +18,32 @@ export interface NetworkFormInput {
     }
 }
 
-export interface IdpFormInput {
-    id: string
-    type: 'oauth' | 'self_signed'
-    issuer: string
-    configUrl: string
-}
+export type IdpFormInput =
+    | {
+          id: string
+          type: 'oauth'
+          issuer: string
+          configUrl: string
+      }
+    | {
+          id: string
+          type: 'self_signed'
+          issuer: string
+          configUrl: string
+      }
+    | {
+          id: string
+          type: 'self_issued'
+          configUrl: string
+      }
 
 export type ActivityStatus =
-    'pending' | 'signed' | 'executed' | 'failed' | 'rejected'
+    | 'pending'
+    | 'signed'
+    | 'executed'
+    | 'failed'
+    | 'rejected'
+    | 'awaiting-signature'
 
 // Limit on how many pages to go through when looking for a tx / network / idp.
 // Way smaller number would be needed for CI, as db is reset after each full run,
@@ -53,6 +71,11 @@ export type WalletGatewayArgs =
           isPopup: false
           page: Page
       }
+
+export type LoginCredentials = {
+    clientId?: string
+    clientSecret?: string
+}
 
 export class WalletGateway {
     private readonly isPopup: boolean
@@ -105,6 +128,7 @@ export class WalletGateway {
     async connect(args: {
         network: string
         customURL?: string
+        credentials?: LoginCredentials
     }): Promise<void> {
         await test.step(`wallet gateway: connect to ${args.network}`, async () => {
             const dapp = this.requireDapp()
@@ -114,9 +138,10 @@ export class WalletGateway {
                 'the dApp should offer a way to connect a wallet'
             ).toBeVisible()
 
-            const discoverPopupPromise = dapp.dappPage.waitForEvent('popup')
-            await connectButton.click()
-            const pickerPopup = await discoverPopupPromise
+            const pickerPopup = await openWalletPicker(
+                dapp.dappPage,
+                connectButton
+            )
 
             await this.selectFromWalletPicker(pickerPopup, args.customURL)
 
@@ -127,6 +152,7 @@ export class WalletGateway {
                 'the wallet gateway has a network select'
             ).toBeVisible()
             await selectNetwork.selectOption({ label: args.network })
+            await this.fillLoginCredentials(popup, args.credentials)
             const confirmConnectButton = popup.getByRole('button', {
                 name: 'Connect',
             })
@@ -359,7 +385,11 @@ export class WalletGateway {
 
     async approveTransaction(
         start: () => Promise<void>,
-        opts?: { waitForClose?: boolean; isExternalSigning?: boolean }
+        opts?: {
+            waitForClose?: boolean
+            isExternalSigning?: boolean
+            review?: (approvalPage: Page) => Promise<void>
+        }
     ): Promise<{
         commandId: string
     }> {
@@ -387,15 +417,21 @@ export class WalletGateway {
             if (!commandId)
                 throw new Error('Approve popup has no commandId in URL')
 
+            await opts?.review?.(popupPage)
             await approveButton.click()
 
             if (opts?.isExternalSigning) {
+                //TODO: race condition where the poll already updated to signed. figure out a better assertion
+                // await this.expectActivityWithStatus(
+                //     commandId,
+                //     'awaiting-signature'
+                // )
+
                 await expect(
-                    popupPage.getByText(
-                        'Complete signing in your external provider'
-                    ),
-                    'approving should show message guiding user to sign in the external signing provider'
+                    popupPage.getByRole('button', { name: 'Approve' }),
+                    'the popup should stay open while the provider signs'
                 ).toBeVisible()
+                return { commandId }
             }
 
             if (opts?.waitForClose !== false) {
@@ -533,8 +569,36 @@ export class WalletGateway {
         throw new Error('wallet connect form popup did not appear')
     }
 
+    private async fillLoginCredentials(
+        page: Page,
+        credentials?: LoginCredentials
+    ): Promise<void> {
+        const clientId = credentials?.clientId
+        if (clientId !== undefined) {
+            const clientIdInput = page.getByLabel('Client ID')
+            await expect(
+                clientIdInput,
+                'Client ID was provided but the login form has no Client ID input'
+            ).toBeVisible()
+            await clientIdInput.fill(clientId)
+        }
+
+        const clientSecret = credentials?.clientSecret
+        if (clientSecret !== undefined) {
+            const clientSecretInput = page.getByLabel('Client Secret')
+            await expect(
+                clientSecretInput,
+                'Client Secret was provided but the login form has no Client Secret input'
+            ).toBeVisible()
+            await clientSecretInput.fill(clientSecret)
+        }
+    }
+
     // Logs in to a gateway that was opened directly, without a dApp.
-    async login(network: string): Promise<void> {
+    async login(
+        network: string,
+        credentials?: LoginCredentials
+    ): Promise<void> {
         await test.step(`wallet gateway: log in to ${network}`, async () => {
             const page = await this.page()
             const selectNetwork = page.getByLabel('Select a network')
@@ -543,6 +607,7 @@ export class WalletGateway {
                 'the wallet gateway has a network select'
             ).toBeVisible()
             await selectNetwork.selectOption({ label: network })
+            await this.fillLoginCredentials(page, credentials)
             await page.getByRole('button', { name: 'Connect' }).click()
             // Wait for the OAuth redirect chain to complete and land on the parties page.
             await page.waitForURL(/\/parties/, { timeout: 30000 })
@@ -981,7 +1046,9 @@ export class WalletGateway {
 
         await popup.locator('#idp-id').fill(idp.id)
         await popup.locator('#idp-type').selectOption(idp.type)
-        await popup.locator('#idp-issuer').fill(idp.issuer)
+        if (idp.type !== 'self_issued') {
+            await popup.locator('#idp-issuer').fill(idp.issuer)
+        }
         if (idp.type === 'oauth') {
             if (!idp.configUrl) {
                 throw new Error('configUrl is required for oauth IDPs')

@@ -6,15 +6,10 @@
 
 /**
  *
- * Network ID
+ * The network ID the wallet corresponds to.
  *
  */
 export type NetworkId = string
-/**
- *
- * The name of the API key.
- *
- */
 export type Name = string
 /**
  *
@@ -34,30 +29,83 @@ export type SynchronizerId = string
  *
  */
 export type IdentityProviderId = string
-export type Method = string
+export type AuthorizationCodeAuthMethod = 'authorization_code'
 export type Scope = string
 export type ClientId = string
+export type Audience = string
+/**
+ *
+ * Authorization code authentication configuration
+ *
+ */
+export interface AuthorizationCodeAuth {
+    method: AuthorizationCodeAuthMethod
+    scope: Scope
+    clientId: ClientId
+    audience: Audience
+}
+export type ClientCredentialsAuthMethod = 'client_credentials'
+/**
+ *
+ * Overrides the network's identity provider for client credentials token acquisition
+ *
+ */
+export type ClientCredentialsIdentityProviderId = string
 export type ClientSecret = string
+/**
+ *
+ * Client credentials authentication configuration
+ *
+ */
+export interface ClientCredentialsAuth {
+    method: ClientCredentialsAuthMethod
+    identityProviderId?: ClientCredentialsIdentityProviderId
+    scope: Scope
+    clientId: ClientId
+    clientSecret: ClientSecret
+    audience: Audience
+}
+export type SelfSignedAuthMethod = 'self_signed'
 /**
  *
  * Issuer of identity provider
  *
  */
 export type Issuer = string
-export type Audience = string
 /**
  *
- * Represents the type of auth for a specified network
+ * Self-signed authentication configuration
  *
  */
-export interface Auth {
-    method: Method
+export interface SelfSignedAuth {
+    method: SelfSignedAuthMethod
     scope: Scope
     clientId: ClientId
-    clientSecret?: ClientSecret
-    issuer?: Issuer
+    clientSecret: ClientSecret
+    issuer: Issuer
     audience: Audience
 }
+export type SelfIssuedAuthMethod = 'self_issued'
+/**
+ *
+ * Self-issued authentication configuration
+ *
+ */
+export interface SelfIssuedAuth {
+    method: SelfIssuedAuthMethod
+    scope: Scope
+    audience: Audience
+}
+/**
+ *
+ * Authentication configuration for a network
+ *
+ */
+export type Auth =
+    | AuthorizationCodeAuth
+    | ClientCredentialsAuth
+    | SelfSignedAuth
+    | SelfIssuedAuth
 /**
  *
  * Ledger api url
@@ -86,35 +134,52 @@ export interface Network {
  *
  */
 export type NetworkName = string
-/**
- *
- * The unique identifier of the API key.
- *
- */
 export type Id = string
 /**
  *
- * Type of identity provider (oauth / self_signed)
+ * OAuth identity provider
  *
  */
-export type Type = any
+export type OauthIdpType = 'oauth'
 /**
  *
  * The configuration URL for the identity provider.
  *
  */
 export type ConfigUrl = string
+export interface OauthIdp {
+    id: Id
+    type: OauthIdpType
+    issuer: Issuer
+    configUrl: ConfigUrl
+}
 /**
  *
- * Structure representing the Identity Providers
+ * Self-signed identity provider
  *
  */
-export interface Idp {
+export type SelfSignedIdpType = 'self_signed'
+export interface SelfSignedIdp {
     id: Id
-    type: Type
+    type: SelfSignedIdpType
     issuer: Issuer
-    configUrl?: ConfigUrl
 }
+/**
+ *
+ * Self-issued identity provider
+ *
+ */
+export type SelfIssuedIdpType = 'self_issued'
+export interface SelfIssuedIdp {
+    id: Id
+    type: SelfIssuedIdpType
+}
+/**
+ *
+ * Structure representing an identity provider
+ *
+ */
+export type Idp = OauthIdp | SelfSignedIdp | SelfIssuedIdp
 /**
  *
  * Set as primary wallet for dApp usage.
@@ -133,10 +198,15 @@ export type PartyHint = string
  *
  */
 export type SigningProviderId = string
-export type VaultName = string
 /**
  *
- * The party id of the wallet to be removed.
+ * Name of signing provider's key to use for getting keys.
+ *
+ */
+export type KeyName = string
+/**
+ *
+ * The party ID corresponding to the wallet.
  *
  */
 export type PartyId = string
@@ -175,13 +245,6 @@ export type TransactionId = string
 export type MessageId = string
 /**
  *
- * The signature of the message.
- *
- */
-export type Signature = string
-export type SignedBy = string
-/**
- *
  * The origin (dApp URL) that initiated this transaction request.
  *
  */
@@ -204,6 +267,12 @@ export type CursorAsString = string
  *
  */
 export type Cursor = CursorAsString
+/**
+ *
+ * The public key of the party.
+ *
+ */
+export type PublicKey = string
 /**
  *
  * Authentication method configured for this network
@@ -249,19 +318,13 @@ export type WalletStatus = 'initialized' | 'allocated' | 'removed'
 export type Hint = string
 /**
  *
- * The public key of the party.
- *
- */
-export type PublicKey = string
-/**
- *
  * The namespace of the party.
  *
  */
 export type Namespace = string
 /**
  *
- * External transaction ID from signing provider.
+ * Unique identifier of the signed transaction given by the Signing Provider. This may not be the same as the internal txId given by the Wallet Gateway.
  *
  */
 export type ExternalTxId = string
@@ -279,17 +342,17 @@ export type TopologyTransactions = string
 export type Disabled = boolean
 /**
  *
- * The reason for the current status.
+ * Reason for the wallet state, e.g., 'no signing provider matched'.
  *
  */
 export type Reason = string
 export type PartyLevelRight = any
 /**
  *
- * The rights of the user for the network.
+ * The rights of the wallet.
  *
  */
-export type Rights = UserLevelRight[]
+export type Rights = PartyLevelRight[]
 /**
  *
  * Structure representing a wallet
@@ -336,6 +399,13 @@ export type SyncWalletsResultDisabled = Wallet[]
  */
 export type WalletSyncNeeded = boolean
 export type TxStatusSigned = 'signed'
+/**
+ *
+ * The signature of the message.
+ *
+ */
+export type Signature = string
+export type SignedBy = string
 export interface SignResultSigned {
     status: TxStatusSigned
     signature: Signature
@@ -438,6 +508,12 @@ export type PreparedTransactionHash = string
  *
  */
 export type Payload = string
+/**
+ *
+ * Reason for why the transaction failed.
+ *
+ */
+export type FailureReason = string
 export interface Transaction {
     id: TransactionId
     commandId: CommandId
@@ -449,6 +525,7 @@ export interface Transaction {
     payload?: Payload
     origin?: Origin
     externalTxId?: ExternalTxId
+    failureReason?: FailureReason
 }
 export type Transactions = Transaction[]
 /**
@@ -492,12 +569,23 @@ export interface ApiKey {
  *
  */
 export type ApiKeys = ApiKey[]
+export interface Key {
+    id: Id
+    name: Name
+    publicKey: PublicKey
+}
 /**
  *
- * The list of signing provider's available vault names.
+ * The list of signing provider's available keys.
  *
  */
-export type Vaults = VaultName[]
+export type Keys = Key[]
+/**
+ *
+ * Represents a null value, used in responses where no data is returned.
+ *
+ */
+export type Null = null
 export interface AddNetworkParams {
     network: Network
 }
@@ -510,6 +598,7 @@ export interface GetNetworkParams {
 export interface SelfSignedAccessTokenParams {
     networkId: NetworkId
     clientId: ClientId
+    clientSecret: ClientSecret
 }
 export interface AddIdpParams {
     idp: Idp
@@ -521,7 +610,7 @@ export interface CreateWalletParams {
     primary?: Primary
     partyHint: PartyHint
     signingProviderId: SigningProviderId
-    vaultName?: VaultName
+    keyName?: KeyName
 }
 export interface AllocatePartyForWalletParams {
     partyId: PartyId
@@ -550,10 +639,8 @@ export interface DeleteMessageToSignParams {
     messageId: MessageId
 }
 export interface ExecuteParams {
-    signature: Signature
     partyId: PartyId
     transactionId: TransactionId
-    signedBy: SignedBy
 }
 export interface AddSessionParams {
     origin: Origin
@@ -561,6 +648,10 @@ export interface AddSessionParams {
 }
 export interface GetTransactionParams {
     transactionId: TransactionId
+}
+export interface GetTransactionStatusParams {
+    transactionId: TransactionId
+    partyId?: PartyId
 }
 export interface ListTransactionsParams {
     limit?: Limit
@@ -575,15 +666,17 @@ export interface GenerateApiKeyParams {
 export interface RemoveApiKeyParams {
     id: Id
 }
-export interface ListSigningProviderVaultsParams {
+export interface ListSigningProviderKeysParams {
     signingProviderId: SigningProviderId
 }
-/**
- *
- * Represents a null value, used in responses where no data is returned.
- *
- */
-export type Null = null
+export interface GetWalletParams {
+    partyId: PartyId
+}
+export interface ChangeSigningProviderParams {
+    signingProviderId: SigningProviderId
+    partyId: PartyId
+    publicKey: PublicKey
+}
 export interface ListNetworksResult {
     networks: Networks
 }
@@ -668,6 +761,12 @@ export interface GetTransactionResult {
     payload?: Payload
     origin?: Origin
     externalTxId?: ExternalTxId
+    failureReason?: FailureReason
+}
+export interface GetTransactionStatusResult {
+    status: Status
+    externalTxId?: ExternalTxId
+    failureReason?: FailureReason
 }
 export interface ListTransactionsResult {
     transactions: Transactions
@@ -685,9 +784,10 @@ export interface GeneratedApiKey {
 export interface ListApiKeysResult {
     apiKeys: ApiKeys
 }
-export interface ListSigningProviderVaultsResult {
-    vaults: Vaults
+export interface ListSigningProviderKeysResult {
+    keys: Keys
 }
+export type GetWalletResult = Wallet | Null
 /**
  *
  * Generated! Represents an alias to any of the provided schemas
@@ -737,6 +837,9 @@ export type ListSessions = () => Promise<ListSessionsResult>
 export type GetTransaction = (
     params: GetTransactionParams
 ) => Promise<GetTransactionResult>
+export type GetTransactionStatus = (
+    params: GetTransactionStatusParams
+) => Promise<GetTransactionStatusResult>
 export type ListTransactions = (
     params: ListTransactionsParams
 ) => Promise<ListTransactionsResult>
@@ -749,6 +852,10 @@ export type GenerateApiKey = (
 ) => Promise<GeneratedApiKey>
 export type ListApiKeys = () => Promise<ListApiKeysResult>
 export type RemoveApiKey = (params: RemoveApiKeyParams) => Promise<Null>
-export type ListSigningProviderVaults = (
-    params: ListSigningProviderVaultsParams
-) => Promise<ListSigningProviderVaultsResult>
+export type ListSigningProviderKeys = (
+    params: ListSigningProviderKeysParams
+) => Promise<ListSigningProviderKeysResult>
+export type GetWallet = (params: GetWalletParams) => Promise<GetWalletResult>
+export type ChangeSigningProvider = (
+    params: ChangeSigningProviderParams
+) => Promise<Null>

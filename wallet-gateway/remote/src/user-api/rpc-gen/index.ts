@@ -26,13 +26,16 @@ import type { AddSession } from './typings.js'
 import type { RemoveSession } from './typings.js'
 import type { ListSessions } from './typings.js'
 import type { GetTransaction } from './typings.js'
+import type { GetTransactionStatus } from './typings.js'
 import type { ListTransactions } from './typings.js'
 import type { DeleteTransaction } from './typings.js'
 import type { GetUser } from './typings.js'
 import type { GenerateApiKey } from './typings.js'
 import type { ListApiKeys } from './typings.js'
 import type { RemoveApiKey } from './typings.js'
-import type { ListSigningProviderVaults } from './typings.js'
+import type { ListSigningProviderKeys } from './typings.js'
+import type { GetWallet } from './typings.js'
+import type { ChangeSigningProvider } from './typings.js'
 
 export type Methods = {
     addNetwork: AddNetwork
@@ -60,13 +63,16 @@ export type Methods = {
     removeSession: RemoveSession
     listSessions: ListSessions
     getTransaction: GetTransaction
+    getTransactionStatus: GetTransactionStatus
     listTransactions: ListTransactions
     deleteTransaction: DeleteTransaction
     getUser: GetUser
     generateApiKey: GenerateApiKey
     listApiKeys: ListApiKeys
     removeApiKey: RemoveApiKey
-    listSigningProviderVaults: ListSigningProviderVaults
+    listSigningProviderKeys: ListSigningProviderKeys
+    getWallet: GetWallet
+    changeSigningProvider: ChangeSigningProvider
 }
 
 function buildController(methods: Methods) {
@@ -96,13 +102,16 @@ function buildController(methods: Methods) {
         removeSession: methods.removeSession,
         listSessions: methods.listSessions,
         getTransaction: methods.getTransaction,
+        getTransactionStatus: methods.getTransactionStatus,
         listTransactions: methods.listTransactions,
         deleteTransaction: methods.deleteTransaction,
         getUser: methods.getUser,
         generateApiKey: methods.generateApiKey,
         listApiKeys: methods.listApiKeys,
         removeApiKey: methods.removeApiKey,
-        listSigningProviderVaults: methods.listSigningProviderVaults,
+        listSigningProviderKeys: methods.listSigningProviderKeys,
+        getWallet: methods.getWallet,
+        changeSigningProvider: methods.changeSigningProvider,
     }
 }
 
